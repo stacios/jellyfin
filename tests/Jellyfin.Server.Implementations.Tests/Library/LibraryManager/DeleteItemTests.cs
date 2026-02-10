@@ -23,14 +23,13 @@ namespace Jellyfin.Server.Implementations.Tests.Library.LibraryManager;
 /// <summary>
 /// Tests for LibraryManager.DeleteItem() verifying file deletion behavior.
 /// Tests use real filesystem operations to verify actual file/folder deletion.
-/// IDisposable is an interface that disposes temp directories after each test.
 /// </summary>
-public sealed class NewTests : IDisposable
+public sealed class DeleteItemTests
 {
     private readonly Emby.Server.Implementations.Library.LibraryManager _libraryManager;
     private readonly string _testRoot;
 
-    public NewTests()
+    public DeleteItemTests()
     {
         var fixture = new Fixture().Customize(new AutoMoqCustomization());
 
@@ -88,22 +87,11 @@ public sealed class NewTests : IDisposable
     }
 
     /// <summary>
-    /// Delete the temp directory after each test.
-    /// Called automatically by xUnit after each test method.
-    /// </summary>
-    public void Dispose()
-    {
-        if (Directory.Exists(_testRoot))
-        {
-            Directory.Delete(_testRoot, true);
-        }
-    }
-
-    /// <summary>
-    /// Verifies that DeleteItem deletes the episode video file itself when DeleteFileLocation is true.
+    /// Verifies that DeleteItem deletes the video file, sidecar files (.nfo, -thumb.jpg, .srt),
+    /// and the sidecar .trickplay folder when DeleteFileLocation is true.
     /// </summary>
     [Fact]
-    public void DeleteItem_ShouldDeleteVideoFile()
+    public void DeleteItem_ShouldDeleteVideoFileAndSidecars()
     {
         // Arrange
         var seasonFolder = Path.Combine(_testRoot, "shows", "MyShow", "Season 1");
@@ -115,95 +103,27 @@ public sealed class NewTests : IDisposable
         Directory.CreateDirectory(seasonFolder);
         Directory.CreateDirectory(trickplayFolder);
         File.WriteAllText(videoPath, "video content");
-        File.WriteAllText(nfoPath, "<episodedetails></episodedetails>");
+        File.WriteAllText(Path.Combine(seasonFolder, "Show S01E01.nfo"), "<episodedetails></episodedetails>");
         File.WriteAllText(thumbPath, "thumbnail");
         File.WriteAllText(srtPath, "1\n00:00:01,000 --> 00:00:02,000\nHello");
         File.WriteAllText(Path.Combine(trickplayFolder, "tile.jpg"), "trickplay image");
 
-        var episode = new Episode
-        {
-            Id = Guid.NewGuid(),
-            Path = videoPath,
-            IsInMixedFolder = true
-        };
+        // DeleteFileLocation: true to delete the file on disk, not just remove it from the database.
+        var deleteOptions = new DeleteOptions { DeleteFileLocation = true };
+        var episode = new Episode { Id = Guid.NewGuid(), Path = videoPath, IsInMixedFolder = true };
 
         // Act
-        // DeleteItem(item, options (delete on disk or remove from DB only), parent, notifyParentItem)
-        _libraryManager.DeleteItem(episode, new DeleteOptions { DeleteFileLocation = true }, null!, false);
+        // parent: null! because the episode has no parent item in this test scenario.
+        // notifyParentItem: false because we don't need to trigger parent refresh in tests.
+        _libraryManager.DeleteItem(episode, deleteOptions, parent: null!, notifyParentItem: false);
 
         // Assert
         Assert.False(File.Exists(videoPath), $"Video file should be deleted: {videoPath}");
-    }
-
-    /// <summary>
-    /// Verifies that DeleteItem deletes the sidecar .trickplay folder.
-    /// </summary>
-    [Fact]
-    public void DeleteItem_ShouldDeleteTrickplayFolder()
-    {
-        // Arrange
-        var seasonFolder = Path.Combine(_testRoot, "shows", "MyShow", "Season 1");
-        var videoPath = Path.Combine(seasonFolder, "Show S01E01.mkv");
-        var nfoPath = Path.Combine(seasonFolder, "Show S01E01.nfo");
-        var thumbPath = Path.Combine(seasonFolder, "Show S01E01-thumb.jpg");
-        var srtPath = Path.Combine(seasonFolder, "Show S01E01.srt");
-        var trickplayFolder = Path.Combine(seasonFolder, "Show S01E01.trickplay");
-        Directory.CreateDirectory(seasonFolder);
-        Directory.CreateDirectory(trickplayFolder);
-        File.WriteAllText(videoPath, "video content");
-        File.WriteAllText(nfoPath, "<episodedetails></episodedetails>");
-        File.WriteAllText(thumbPath, "thumbnail");
-        File.WriteAllText(srtPath, "1\n00:00:01,000 --> 00:00:02,000\nHello");
-        File.WriteAllText(Path.Combine(trickplayFolder, "tile.jpg"), "trickplay image");
-
-        var episode = new Episode
-        {
-            Id = Guid.NewGuid(),
-            Path = videoPath,
-            IsInMixedFolder = true
-        };
-
-        // Act
-        _libraryManager.DeleteItem(episode, new DeleteOptions { DeleteFileLocation = true }, null!, false);
-
-        // Assert
         Assert.False(Directory.Exists(trickplayFolder), $"Trickplay folder should be deleted: {trickplayFolder}");
-    }
-
-    /// <summary>
-    /// Verifies that DeleteItem deletes sidecar files (.nfo, -thumb.jpg, .srt).
-    /// </summary>
-    [Fact]
-    public void DeleteItem_ShouldDeleteSidecarFiles()
-    {
-        // Arrange
-        var seasonFolder = Path.Combine(_testRoot, "shows", "MyShow", "Season 1");
-        var videoPath = Path.Combine(seasonFolder, "Show S01E01.mkv");
-        var nfoPath = Path.Combine(seasonFolder, "Show S01E01.nfo");
-        var thumbPath = Path.Combine(seasonFolder, "Show S01E01-thumb.jpg");
-        var srtPath = Path.Combine(seasonFolder, "Show S01E01.srt");
-        var trickplayFolder = Path.Combine(seasonFolder, "Show S01E01.trickplay");
-        Directory.CreateDirectory(seasonFolder);
-        Directory.CreateDirectory(trickplayFolder);
-        File.WriteAllText(videoPath, "video content");
-        File.WriteAllText(nfoPath, "<episodedetails></episodedetails>");
-        File.WriteAllText(thumbPath, "thumbnail");
-        File.WriteAllText(srtPath, "1\n00:00:01,000 --> 00:00:02,000\nHello");
-        File.WriteAllText(Path.Combine(trickplayFolder, "tile.jpg"), "trickplay image");
-
-        var episode = new Episode
-        {
-            Id = Guid.NewGuid(),
-            Path = videoPath,
-            IsInMixedFolder = true
-        };
-
-        // Act
-        _libraryManager.DeleteItem(episode, new DeleteOptions { DeleteFileLocation = true }, null!, false);
-
-        // Assert
         Assert.False(File.Exists(nfoPath), $"NFO file should be deleted: {nfoPath}");
         Assert.False(File.Exists(thumbPath), $"Thumbnail should be deleted: {thumbPath}");
         Assert.False(File.Exists(srtPath), $"Subtitle should be deleted: {srtPath}");
+
+        Directory.Delete(_testRoot, true);
     }
 }
